@@ -294,7 +294,12 @@ Client.prototype.startHandshake = function(this: ClientInstance, udpServers: any
     });
 
     this.socket.on('end', () => {
-      if (this.debug) this.logLine?.('block2');
+      if (this.debug) {
+        this.logLine?.('rtsp_end', {
+          lastStatus: rtsp_methods[this.status + 1] ?? this.status,
+          cseq: this.cseq,
+        });
+      }
       this.cleanup('disconnected');
     });
   };
