@@ -24,6 +24,8 @@ export interface AirplayConfig {
   rtsp_retry_jitter_ms: number;
   control_sync_base_delay_ms: number;
   control_sync_jitter_ms: number;
+  use_monotonic_clock: boolean;
+  jump_forward_enabled: boolean;
   jump_forward_threshold_ms: number;
   jump_forward_lead_ms: number;
   device_magic: number;
@@ -56,6 +58,8 @@ export const config: AirplayConfig = {
   rtsp_retry_jitter_ms: 150,
   control_sync_base_delay_ms: 2,
   control_sync_jitter_ms: 3,
+  use_monotonic_clock: false,
+  jump_forward_enabled: false,
   jump_forward_threshold_ms: 180,
   jump_forward_lead_ms: 220,
   device_magic: randomInt(9),

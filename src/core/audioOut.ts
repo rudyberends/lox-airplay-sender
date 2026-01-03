@@ -40,10 +40,15 @@ export default class AudioOut extends EventEmitter {
       typeof startTimeMs === 'number' && Number.isFinite(startTimeMs)
         ? startTimeMs
         : undefined;
-    const wallToMonoOffset = Date.now() - performance.now();
-    // Anchor the RTP clock to a monotonic base to avoid NTP slews.
-    this.rtpTimeRef = (this.startTimeMs ?? Date.now()) - wallToMonoOffset;
-    this.monotonicRef = performance.now();
+    if (config.use_monotonic_clock) {
+      const wallToMonoOffset = Date.now() - performance.now();
+      // Anchor the RTP clock to a monotonic base to avoid NTP slews.
+      this.rtpTimeRef = (this.startTimeMs ?? Date.now()) - wallToMonoOffset;
+      this.monotonicRef = performance.now();
+    } else {
+      this.rtpTimeRef = this.startTimeMs ?? Date.now();
+      this.monotonicRef = 0;
+    }
 
     devices.on('airtunes_devices', (hasAirTunes) => {
       this.hasAirTunes = hasAirTunes;
@@ -60,7 +65,7 @@ export default class AudioOut extends EventEmitter {
 
       if (this.hasAirTunes && seq % config.sync_period === 0) {
         this.emit('need_sync', seq);
-        const nowMs = performance.now();
+        const nowMs = config.use_monotonic_clock ? performance.now() : Date.now();
         const expectedTimeMs =
           this.rtpTimeRef +
           ((seq * config.frames_per_packet) / config.sampling_rate) * 1000;
@@ -76,7 +81,7 @@ export default class AudioOut extends EventEmitter {
       (config.frames_per_packet / config.sampling_rate) * 1000;
 
     const syncAudio = () => {
-      const nowMs = performance.now();
+      const nowMs = config.use_monotonic_clock ? performance.now() : Date.now();
       const elapsed = nowMs - this.rtpTimeRef;
       if (elapsed < 0) {
         setTimeout(syncAudio, Math.min(config.stream_latency, Math.abs(elapsed)));
@@ -87,17 +92,19 @@ export default class AudioOut extends EventEmitter {
       );
 
       // If we're lagging behind significantly, jump forward to avoid long hitches.
-      const expectedTimeMs = this.rtpTimeRef + currentSeq * frameDurationMs;
-      const deltaMs = nowMs - expectedTimeMs;
-      if (deltaMs > config.jump_forward_threshold_ms) {
-        const jumpSeq = Math.ceil(
-          (config.jump_forward_lead_ms * config.sampling_rate) /
-            (config.frames_per_packet * 1000),
-        );
-        const newSeq = currentSeq + jumpSeq;
-        this.rtpTimeRef = nowMs - newSeq * frameDurationMs;
-        this.lastSeq = newSeq - 1;
-        currentSeq = newSeq;
+      if (config.jump_forward_enabled) {
+        const expectedTimeMs = this.rtpTimeRef + currentSeq * frameDurationMs;
+        const deltaMs = nowMs - expectedTimeMs;
+        if (deltaMs > config.jump_forward_threshold_ms) {
+          const jumpSeq = Math.ceil(
+            (config.jump_forward_lead_ms * config.sampling_rate) /
+              (config.frames_per_packet * 1000),
+          );
+          const newSeq = currentSeq + jumpSeq;
+          this.rtpTimeRef = nowMs - newSeq * frameDurationMs;
+          this.lastSeq = newSeq - 1;
+          currentSeq = newSeq;
+        }
       }
 
       for (let i = this.lastSeq + 1; i <= currentSeq; i += 1) {
