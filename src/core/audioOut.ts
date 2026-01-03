@@ -55,6 +55,11 @@ export default class AudioOut extends EventEmitter {
 
       if (this.hasAirTunes && seq % config.sync_period === 0) {
         this.emit('need_sync', seq);
+        const expectedTimeMs =
+          this.rtpTimeRef +
+          ((seq * config.frames_per_packet) / config.sampling_rate) * 1000;
+        const deltaMs = Date.now() - expectedTimeMs;
+        this.emit('metrics', { type: 'sync', seq, deltaMs, latencyFrames: this.latencyFrames });
       }
 
       this.emit('packet', packet);

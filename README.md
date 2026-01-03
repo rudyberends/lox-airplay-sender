@@ -63,6 +63,7 @@ Creates and starts a sender for one AirPlay device. Returns the instance so you 
 - `device`: `{ event: "device", message: status, detail: { key, desc } }`
 - `buffer`: `{ event: "buffer", message: status }` where status is `buffering|playing|drain|end`
 - `error`: `{ event: "error", message }`
+- `metrics`: `{ event: "metrics", detail }` sync drift snapshots emitted on each sync tick when enabled.
 
 ### `LoxAirplaySender` methods
 - `sendPcm(chunk: Buffer)`: Push raw PCM audio. If `inputCodec` is `"alac"` you can push ALAC frames.

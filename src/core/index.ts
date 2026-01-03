@@ -39,6 +39,9 @@ class AirTunes extends Duplex {
     });
 
     audioOut.init(this.devices, this.circularBuffer, options.startTimeMs);
+    audioOut.on('metrics', (metrics) => {
+      this.emit('metrics', metrics);
+    });
 
     this.circularBuffer.on('drain', () => {
       this.emit('drain');

@@ -1,6 +1,6 @@
 {
   "name": "lox-airplay-sender",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "AirPlay sender (RAOP/AirPlay 1 + AirPlay 2 auth flows) ",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

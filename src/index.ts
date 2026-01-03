@@ -116,6 +116,9 @@ export class LoxAirplaySender extends EventEmitter {
     this.airtunes.on('error', (err: unknown) => {
       onEvent?.({ event: 'error', message: err instanceof Error ? err.message : String(err) });
     });
+    this.airtunes.on('metrics', (detail: unknown) => {
+      onEvent?.({ event: 'metrics', detail });
+    });
 
     const dev = this.airtunes.add(options.host, {
       port: options.port,
