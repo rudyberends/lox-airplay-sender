@@ -1873,7 +1873,8 @@ Client.prototype.processData = function(this: ClientInstance, blob: string, rawD
       };
     break;
     case SETPROGRESS:
-      this.status = this.airplay2 ? FLUSH: PLAYING;
+      // After reporting progress, stay in PLAYING; avoid forcing FLUSH on every update.
+      this.status = PLAYING;
     break;
     case SETDAAP:
       this.status = PLAYING;
