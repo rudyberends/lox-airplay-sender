@@ -1,4 +1,5 @@
 import { EventEmitter } from 'node:events';
+import { performance } from 'node:perf_hooks';
 import config from '../utils/config';
 import { low32 } from '../utils/numUtil';
 import type { Packet } from '../utils/packetPool';
@@ -18,7 +19,8 @@ type DevicesEmitter = EventEmitter & {
 export default class AudioOut extends EventEmitter {
   private lastSeq = -1;
   private hasAirTunes = false;
-  private rtpTimeRef = Date.now();
+  private rtpTimeRef = 0;
+  private monotonicRef = 0;
   private startTimeMs?: number;
   private latencyFrames = 0;
   private latencyApplied = false;
@@ -38,7 +40,10 @@ export default class AudioOut extends EventEmitter {
       typeof startTimeMs === 'number' && Number.isFinite(startTimeMs)
         ? startTimeMs
         : undefined;
-    this.rtpTimeRef = this.startTimeMs ?? Date.now();
+    const wallToMonoOffset = Date.now() - performance.now();
+    // Anchor the RTP clock to a monotonic base to avoid NTP slews.
+    this.rtpTimeRef = (this.startTimeMs ?? Date.now()) - wallToMonoOffset;
+    this.monotonicRef = performance.now();
 
     devices.on('airtunes_devices', (hasAirTunes) => {
       this.hasAirTunes = hasAirTunes;
@@ -66,15 +71,33 @@ export default class AudioOut extends EventEmitter {
       packet.release();
     };
 
+    const frameDurationMs =
+      (config.frames_per_packet / config.sampling_rate) * 1000;
+
     const syncAudio = () => {
-      const elapsed = Date.now() - this.rtpTimeRef;
+      const nowMs = performance.now();
+      const elapsed = nowMs - this.rtpTimeRef;
       if (elapsed < 0) {
         setTimeout(syncAudio, Math.min(config.stream_latency, Math.abs(elapsed)));
         return;
       }
-      const currentSeq = Math.floor(
+      let currentSeq = Math.floor(
         (elapsed * config.sampling_rate) / (config.frames_per_packet * 1000),
       );
+
+      // If we're lagging behind significantly, jump forward to avoid long hitches.
+      const expectedTimeMs = this.rtpTimeRef + currentSeq * frameDurationMs;
+      const deltaMs = nowMs - expectedTimeMs;
+      if (deltaMs > config.jump_forward_threshold_ms) {
+        const jumpSeq = Math.ceil(
+          (config.jump_forward_lead_ms * config.sampling_rate) /
+            (config.frames_per_packet * 1000),
+        );
+        const newSeq = currentSeq + jumpSeq;
+        this.rtpTimeRef = nowMs - newSeq * frameDurationMs;
+        this.lastSeq = newSeq - 1;
+        currentSeq = newSeq;
+      }
 
       for (let i = this.lastSeq + 1; i <= currentSeq; i += 1) {
         sendPacket(i);
