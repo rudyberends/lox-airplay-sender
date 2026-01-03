@@ -50,7 +50,7 @@ export const config: AirplayConfig = {
   sampling_rate: 44100, // fixed by AirTunes v2
   sync_period: 126, // UDP sync packets are sent to all AirTunes devices regularly
   stream_latency: 200, // audio UDP packets are flushed in bursts periodically
-  rtsp_timeout: 15000, // RTSP servers are considered gone if no reply is received before the timeout
+  rtsp_timeout: 2147483647, // RTSP servers are considered gone if no reply is received before the timeout (legacy default)
   rtsp_heartbeat: 15000, // some RTSP (like HomePod) servers requires heartbeat.
   rtsp_retry_attempts: 3,
   rtsp_retry_base_ms: 300,
