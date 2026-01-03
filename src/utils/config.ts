@@ -18,6 +18,12 @@ export interface AirplayConfig {
   stream_latency: number;
   rtsp_timeout: number;
   rtsp_heartbeat: number;
+  rtsp_retry_attempts: number;
+  rtsp_retry_base_ms: number;
+  rtsp_retry_max_ms: number;
+  rtsp_retry_jitter_ms: number;
+  control_sync_base_delay_ms: number;
+  control_sync_jitter_ms: number;
   device_magic: number;
   ntp_epoch: number;
   iv_base64: string;
@@ -40,8 +46,14 @@ export const config: AirplayConfig = {
   sampling_rate: 44100, // fixed by AirTunes v2
   sync_period: 126, // UDP sync packets are sent to all AirTunes devices regularly
   stream_latency: 200, // audio UDP packets are flushed in bursts periodically
-  rtsp_timeout: 2147483647, // RTSP servers are considered gone if no reply is received before the timeout
+  rtsp_timeout: 15000, // RTSP servers are considered gone if no reply is received before the timeout
   rtsp_heartbeat: 15000, // some RTSP (like HomePod) servers requires heartbeat.
+  rtsp_retry_attempts: 3,
+  rtsp_retry_base_ms: 300,
+  rtsp_retry_max_ms: 4000,
+  rtsp_retry_jitter_ms: 150,
+  control_sync_base_delay_ms: 2,
+  control_sync_jitter_ms: 3,
   device_magic: randomInt(9),
   ntp_epoch: 0x83aa7e80,
   iv_base64: 'ePRBLI0XN5ArFaaz7ncNZw',

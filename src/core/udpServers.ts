@@ -168,6 +168,14 @@ export default class UDPServers extends EventEmitter {
     ntpTime.copy(packet, 8);
 
     packet.writeUInt32BE(low32(seq * config.frames_per_packet + config.sampling_rate * 2), 16);
-    this.control.socket.send(packet, 0, packet.length, dev.controlPort, dev.host);
+    const delay = Math.max(
+      0,
+      config.control_sync_base_delay_ms +
+        Math.random() * config.control_sync_jitter_ms,
+    );
+
+    setTimeout(() => {
+      this.control.socket?.send(packet, 0, packet.length, dev.controlPort, dev.host);
+    }, delay);
   }
 }

@@ -193,6 +193,7 @@ function Client(this: ClientInstance, volume: number, password: string | null, a
   this.hostip = null;
   this.homekitver = this.transient ? "4" : "3";
   this.metadataReady = false;
+  (this as AnyObject).connectAttempts = 0;
 }
 
 util.inherits(Client, events.EventEmitter);
@@ -201,90 +202,110 @@ export { Client };
 export default { Client };
 
 Client.prototype.startHandshake = function(this: ClientInstance, udpServers: any, host: string, port: number) {
-  var self = this;
   this.startTimeout();
   this.hostip = host;
   this.controlPort = udpServers.control.port;
   this.timingPort  = udpServers.timing.port;
+  (this as AnyObject).connectAttempts = 0;
 
+  const connect = () => {
+    const attempt = (this as AnyObject).connectAttempts ?? 0;
+    this.socket = net.connect(port, host, async () => {
+      this.clearTimeout();
+      (this as AnyObject).connectAttempts = 0;
 
-  this.socket = net.connect(port, host, async function() {
-    self.clearTimeout();
+      if (this.needPassword || this.needPin) {
+        this.status = PAIR_PIN_START;
+        this.sendNextRequest();
+        this.startHeartBeat();
+      } else {
+        if (this.mode != 2) {
+          if (this.debug) this.logLine?.("AUTH_SETUP","nah")
+          this.status = OPTIONS;
+          this.sendNextRequest();
+          this.startHeartBeat();
+        } 
+        else {
+          this.status = AUTH_SETUP;
+          if (this.debug) this.logLine?.("AUTH_SETUP","yah")
+          this.sendNextRequest();
+          this.startHeartBeat();
+        }
+      }
+    });
 
-    if (self.needPassword || self.needPin) {
-      self.status = PAIR_PIN_START;
-      self.sendNextRequest();
-      self.startHeartBeat();
-    } else {
-      if (self.mode != 2) {
-          if (self.debug) self.logLine?.("AUTH_SETUP","nah")
-        self.status = OPTIONS;
-        self.sendNextRequest();
-        self.startHeartBeat();
-      } 
-      else {
-        self.status = AUTH_SETUP;
-          if (self.debug) self.logLine?.("AUTH_SETUP","yah")
-        self.sendNextRequest();
-        self.startHeartBeat();
+    let blob = '';
+    this.socket.on('data', (data: Buffer) => {
+      if (this.encryptedChannel && this.credentials){
+        // if (this.debug != false) this.logLine?.("incoming", data)
+        data = this.credentials.decrypt(data)
+      }
+      this.clearTimeout();
+
+      /*
+       * I wish I could use node's HTTP parser for this...
+       * I assume that all responses have empty bodies.
+       */
+      const rawData = data;
+      const dataStr = data.toString();
+
+      blob += dataStr;
+      let endIndex = blob.indexOf('\r\n\r\n');
+
+      if (endIndex < 0) {
+          return;
       }
 
+      endIndex += 4;
 
-    }
-  });
+      blob = blob.substring(0, endIndex);
+      this.processData(blob, rawData);
 
-  var blob = '';
-  this.socket.on('data', function(data: Buffer) {
-    if (self.encryptedChannel && self.credentials){
-      // if (self.debug != false) self.logLine?.("incoming", data)
-      data = self.credentials.decrypt(data)
-    }
-    self.clearTimeout();
+      blob = dataStr.substring(endIndex);
+    });
 
-    /*
-     * I wish I could use node's HTTP parser for this...
-     * I assume that all responses have empty bodies.
-     */
-    var rawData = data;
-    const dataStr = data.toString();
-
-    blob += dataStr;
-    var endIndex = blob.indexOf('\r\n\r\n');
-
-    if (endIndex < 0) {
+    this.socket.on('error', (err: any) => {
+      this.socket = null;
+      this.clearTimeout();
+      const nextAttempt = ((this as AnyObject).connectAttempts ?? 0) + 1;
+      (this as AnyObject).connectAttempts = nextAttempt;
+      const shouldRetry = nextAttempt <= config.rtsp_retry_attempts;
+      if (shouldRetry) {
+        const baseBackOff = Math.min(
+          config.rtsp_retry_base_ms * Math.pow(2, nextAttempt - 1),
+          config.rtsp_retry_max_ms
+        );
+        const jitter = Math.random() * config.rtsp_retry_jitter_ms;
+        const backOff = baseBackOff + jitter;
+        if (this.debug) this.logLine?.('rtsp_retry', { attempt: nextAttempt, backOff, code: err?.code });
+        setTimeout(() => {
+          this.startTimeout();
+          connect();
+        }, backOff);
         return;
-    }
+      }
 
-    endIndex += 4;
+      if (this.debug) this.logLine?.(err?.code);
+      if(err?.code === 'ECONNREFUSED'){
+        if (this.debug) this.logLine?.('block');
+        this.cleanup('connection_refused');}
+      else
+        this.cleanup('rtsp_socket', err?.code);
+    });
 
-    blob = blob.substring(0, endIndex);
-    self.processData(blob, rawData);
+    this.socket.on('end', () => {
+      if (this.debug) this.logLine?.('block2');
+      this.cleanup('disconnected');
+    });
+  };
 
-    blob = dataStr.substring(endIndex);
-  });
-
-  this.socket.on('error', function(err: any) {
-    self.socket = null;
-      if (self.debug) self.logLine?.(err.code);
-    if(err.code === 'ECONNREFUSED'){
-        if (self.debug) self.logLine?.('block');
-      self.cleanup('connection_refused');}
-    else
-      self.cleanup('rtsp_socket', err.code);
-  });
-
-  this.socket.on('end', function() {
-    if (self.debug) self.logLine?.('block2');
-    self.cleanup('disconnected');
-  });
+  connect();
 };
 
 Client.prototype.startTimeout = function(this: ClientInstance) {
-  var self = this;
-
-  this.timeout = setTimeout(function() {
-    if (self.debug) self.logLine?.('timeout');
-    self.cleanup('timeout');
+  this.timeout = setTimeout(() => {
+    if (this.debug) this.logLine?.('timeout');
+    this.cleanup('timeout');
   }, config.rtsp_timeout);
 };
 
@@ -343,11 +364,13 @@ Client.prototype.setPasscode = async function(this: ClientInstance, passcode: st
 }
 
 Client.prototype.startHeartBeat = function(this: ClientInstance) {
-  var self = this;
-
+  if (this.heartBeat) {
+    clearInterval(this.heartBeat);
+    this.heartBeat = null;
+  }
   if (config.rtsp_heartbeat > 0){
-    this.heartBeat = setInterval(function() {
-      self.sendHeartBeat(function(){
+    this.heartBeat = setInterval(() => {
+      this.sendHeartBeat(() => {
         //this.logLine?.('HeartBeat sent!');
       });
     }, config.rtsp_heartbeat);
@@ -389,7 +412,6 @@ Client.prototype.setArtwork = function(this: ClientInstance, art: Buffer | strin
   }
 
   if (typeof art == 'string') {
-    var self = this;
     if (contentType === null) {
       var ext = art.slice(-4);
       if (ext == ".jpg" || ext == "jpeg") {
@@ -399,14 +421,14 @@ Client.prototype.setArtwork = function(this: ClientInstance, art: Buffer | strin
       } else if (ext == ".gif") {
         contentType = "image/gif";
       } else {
-        return self.cleanup('unknown_art_file_ext');
+        return this.cleanup('unknown_art_file_ext');
       }
     }
-    return fs.readFile(art, function(err: NodeJS.ErrnoException | null, data: Buffer) {
+    return fs.readFile(art, (err: NodeJS.ErrnoException | null, data: Buffer) => {
       if (err !== null) {
-        return self.cleanup('invalid_art_file');
+        return this.cleanup('invalid_art_file');
       }
-      self.setArtwork(data, contentType, callback);
+      this.setArtwork(data, contentType, callback);
     });
   }
 
@@ -462,6 +484,44 @@ Client.prototype.cleanup = function(this: ClientInstance, type: string, msg?: an
   if(this.socket) {
     this.socket.destroy();
     this.socket = null;
+  }
+
+  if (this.eventsocket) {
+    try {
+      this.eventsocket.destroy?.();
+      this.eventsocket = null;
+    } catch {
+      /* ignore */
+    }
+  }
+
+  if (this.controlsocket) {
+    try {
+      this.controlsocket.close();
+    } catch {
+      /* ignore */
+    }
+    this.controlsocket = null;
+  }
+
+  if (this.timingsocket) {
+    try {
+      this.timingsocket.close();
+    } catch {
+      /* ignore */
+    }
+    this.timingsocket = null;
+  }
+
+  const audioSocket = (this as AnyObject).audioSocket;
+  if (audioSocket) {
+    try {
+      audioSocket.close?.();
+      audioSocket.destroy?.();
+    } catch {
+      /* ignore */
+    }
+    (this as AnyObject).audioSocket = null;
   }
 };
 
@@ -636,10 +696,8 @@ Client.prototype.sendNextRequest = async function(this: ClientInstance, di?: any
 
     request += 'Content-Length:' + 0 + '\r\n\r\n';
     this.socket.write(Buffer.from(request, 'utf-8'))} else {
-      this.logLine?.("pass",this.password);
       if (this.password) {
         this.status = this.airplay2 ? PAIR_SETUP_1 : PAIR_PIN_SETUP_1;
-        this.logLine?.("pass2", this.password);
         this.sendNextRequest();
       } else {
         if (!this.needPassword) {
@@ -694,7 +752,6 @@ Client.prototype.sendNextRequest = async function(this: ClientInstance, di?: any
     request += this.makeHead("POST","/pair-verify", "", true);
     request += 'Content-Type: application/octet-stream\r\n'
     this.pair_verify_1_verifier = ATVAuthenticator.verifier(this.authSecret);
-    if (this.debug) this.logLine?.(this.authSecret)
     request += 'Content-Length:' + Buffer.byteLength(this.pair_verify_1_verifier.verifierBody) + '\r\n\r\n';
     this.socket.write(Buffer.concat([Buffer.from(request, 'utf-8'),this.pair_verify_1_verifier.verifierBody]))
     request = ''
@@ -986,8 +1043,7 @@ Client.prototype.sendNextRequest = async function(this: ClientInstance, di?: any
     try{this.timingsocket.close();} catch(e){}
     try{
     this.timingsocket = dgram.createSocket({type: 'udp4', reuseAddr: true});
-    var self = this;
-    this.timingsocket.on('message', function(msg: Buffer, rinfo: any) {
+    this.timingsocket.on('message', (msg: Buffer, rinfo: any) => {
 
     // only listen and respond on own hosts
     // if (this.hosts.indexOf(rinfo.address) < 0) return;
@@ -1008,11 +1064,11 @@ Client.prototype.sendNextRequest = async function(this: ClientInstance, di?: any
       ntpTime.copy(reply, 16);
       ntpTime.copy(reply, 24);
 
-      self.timingsocket.send(
+      this.timingsocket.send(
         reply, 0, reply.length,
         rinfo.port, rinfo.address
       );
-      self.logLine?.('timing socket pinged', rinfo.port, rinfo.address)
+      this.logLine?.('timing socket pinged', rinfo.port, rinfo.address)
     });
     this.timingsocket.bind(this.timingPort, this.socket.address().address);} catch(e){}
     request += 'Content-Length: ' + Buffer.byteLength(setap1) + '\r\n\r\n';
@@ -1064,9 +1120,8 @@ Client.prototype.sendNextRequest = async function(this: ClientInstance, di?: any
           }]});
     request += 'Content-Length: ' + Buffer.byteLength(setap2) + '\r\n\r\n';
     this.controlsocket = dgram.createSocket({type: 'udp4', reuseAddr: true});
-    var self = this;
-    this.controlsocket.on('message', function(msg: Buffer, rinfo: any) {
-      self.logLine?.('controlsocket.data',msg)
+    this.controlsocket.on('message', (msg: Buffer) => {
+      this.logLine?.('controlsocket.data',msg)
     })
     this.controlsocket.bind(this.controlPort, this.socket.address().address);
     let s2ct = this.credentials.encrypt(Buffer.concat([Buffer.from(request, 'utf-8'),setap2]));
@@ -1076,17 +1131,6 @@ Client.prototype.sendNextRequest = async function(this: ClientInstance, di?: any
   case RECORD:
     //this.logLine?.(request);
     if (this.airplay2){
-    this.eventsocket = net.connect(this.eventPort, this.hostip, async function() {
-
-    });
-    this.eventsocket.on('data', function(data: Buffer) {
-      self.logLine?.('eventsocket.data', data)
-      self.logLine?.('eventsocket.data2', self.event_credentials.decrypt(data).toString())
-
-    });
-    this.eventsocket.on('error', function(err: any) {
-      self.logLine?.('eventsocket.error', err)
-    })
     this.event_credentials =  new Credentials(
       "sdsds",
       "",
@@ -1107,7 +1151,28 @@ Client.prototype.sendNextRequest = async function(this: ClientInstance, di?: any
       this.srp.computeK(),
       Buffer.from("Events-Write-Encryption-Key"),
       32
-    );}
+    );
+    this.eventsocket = net.connect(this.eventPort, this.hostip, async () => {
+
+    });
+    this.eventsocket.on('data', (data: Buffer) => {
+      if (this.debug) {
+        this.logLine?.('eventsocket.data', data)
+        try {
+          const decrypted = this.event_credentials?.decrypt(data);
+          if (decrypted) {
+            this.logLine?.('eventsocket.data2', decrypted.toString());
+          }
+        } catch (err) {
+          this.logLine?.('eventsocket.decrypt.error', err);
+        }
+      }
+
+    });
+    this.eventsocket.on('error', (err: any) => {
+      if (this.debug) this.logLine?.('eventsocket.error', err)
+    })
+    }
     if (this.airplay2 != null && this.credentials != null) {
     //  this.controlsocket.close();
       var nextSeq = this.audioOut.lastSeq + 10;
@@ -1304,17 +1369,17 @@ Client.prototype.processData = function(this: ClientInstance, blob: string, rawD
   this.logLine?.('Receiving request:',this.hostip , rtsp_methods[this.status+1]);
   var response: AnyObject = parseResponse2(blob, this),
       headers: AnyObject = response.headers || {};
-  if (this.debug != false) {
-    if ((rawData.toString()).includes("bplist00")) {
-          try {
-            let buf = Buffer.from(rawData).slice(rawData.length - parseInt(headers['Content-Length']), rawData.length)
-            let bplist = bplistParser.parseBuffer(buf)
-            this.logLine?.("incoming-res: \r\n", JSON.stringify(bplist))
-          } catch (_) {
-            this.logLine?.("incoming-res: \r\n", rawData.toString())
-          }
-        } else {
-         this.logLine?.("incoming-res: \r\n", rawData.toString())
+  if (this.debug) {
+    try {
+      if ((rawData.toString()).includes("bplist00")) {
+        const buf = Buffer.from(rawData).slice(rawData.length - parseInt(headers['Content-Length']), rawData.length);
+        const bplist = bplistParser.parseBuffer(buf);
+        this.logLine?.("incoming-res:", JSON.stringify(bplist));
+      } else {
+        this.logLine?.("incoming-res:", { code: response.code, length: rawData.length });
+      }
+    } catch {
+      this.logLine?.("incoming-res:", { code: response.code, length: rawData.length });
     }
   }
     if (this.status != OPTIONS && this.status != OPTIONS2 && this.mode == 0) {
@@ -1576,7 +1641,6 @@ Client.prototype.processData = function(this: ClientInstance, blob: string, rawD
           32
         );
         this.encryptedChannel = true
-        this.logLine?.(this.srp.computeK())
         this.status = SETUP_AP2_1
       }
       else {

@@ -271,28 +271,26 @@ function AirTunesDevice(
 Object.setPrototypeOf(AirTunesDevice.prototype, EventEmitter.prototype);
 
 AirTunesDevice.prototype.start = function (this: AirTunesDeviceInstance): void {
-  var self = this;
   this.audioSocket = dgram.createSocket('udp4');
 
   // Wait until timing and control ports are chosen. We need them in RTSP handshake.
-  this.udpServers.on('ports', function(err: any) {
+  this.udpServers.on('ports', (err: any) => {
     if(err) {
-      self.logLine?.(err.code);
-      self.status = 'stopped';
-      self.emit('status', 'stopped');
-      self.logLine?.('port issues');
-      self.emit('error', 'udp_ports', err.code);
+      this.logLine?.(err.code);
+      this.status = 'stopped';
+      this.emit('status', 'stopped');
+      this.logLine?.('port issues');
+      this.emit('error', 'udp_ports', err.code);
 
       return;
     }
-    self.doHandshake();
+    this.doHandshake();
   });
 
   this.udpServers.bind(this.host);
 };
 
 AirTunesDevice.prototype.doHandshake = function (this: AirTunesDeviceInstance): void {
-  var self = this;
   try{
   if (this.rtsp == null){
     try{
@@ -309,50 +307,52 @@ AirTunesDevice.prototype.doHandshake = function (this: AirTunesDeviceInstance): 
         borkedshp: this.borkedshp,
         log: this.log,
       });} catch(e){
-      self.logLine?.(e)}
+      this.logLine?.(e)}
   }
   if (!this.rtsp) {
     return;
   }
-  this.rtsp.on('config', function(setup: any) {
-    self.audioLatency = setup.audioLatency;
-    self.requireEncryption = setup.requireEncryption;
-    self.serverPort = setup.server_port;
-    self.controlPort = setup.control_port;
-    self.timingPort = setup.timing_port;
-    self.credentials = setup.credentials ;
+  this.rtsp.on('config', (setup: any) => {
+    this.audioLatency = setup.audioLatency;
+    this.requireEncryption = setup.requireEncryption;
+    this.serverPort = setup.server_port;
+    this.controlPort = setup.control_port;
+    this.timingPort = setup.timing_port;
+    this.credentials = setup.credentials ;
     try {
-      (self.audioOut as any)?.setLatencyFrames?.(self.audioLatency);
+      (this.audioOut as any)?.setLatencyFrames?.(this.audioLatency);
     } catch {
       /* ignore */
     }
   });
 
-  this.rtsp.on('ready', function() {
-    self.relayAudio();
+  this.rtsp.on('ready', () => {
+    this.status = 'playing';
+    this.emit('status','playing');
+    if (this.airplay2) this.relayAudio();
   });
 
-  this.rtsp.on('need_password', function() {
-    self.emit('status','need_password');
+  this.rtsp.on('need_password', () => {
+    this.emit('status','need_password');
   });
 
-  this.rtsp.on('pair_failed', function() {
-    self.emit('status','pair_failed');
+  this.rtsp.on('pair_failed', () => {
+    this.emit('status','pair_failed');
   });
 
-  this.rtsp.on('pair_success', function() {
-    self.emit('status','pair_success');
+  this.rtsp.on('pair_success', () => {
+    this.emit('status','pair_success');
   });
 
-  this.rtsp.on('end', function(err: any) {
-    self.logLine?.(err);
-    self.cleanup();
+  this.rtsp.on('end', (err: any) => {
+    this.logLine?.(err);
+    this.cleanup();
 
     if(err !== 'stopped')
-      self.emit(err);
+      this.emit(err);
   });
   } catch(e){
-    self.logLine?.(e)
+    this.logLine?.(e)
   }
   // console.log(this.udpServers, this.host,this.port)
   if (!this.rtsp) {
@@ -362,29 +362,28 @@ AirTunesDevice.prototype.doHandshake = function (this: AirTunesDeviceInstance): 
 };
 
 AirTunesDevice.prototype.relayAudio = function (this: AirTunesDeviceInstance): void {
-  var self = this;
   this.status = 'ready';
   this.emit('status', 'ready');
 
 
-  this.audioCallback = function(packet: Packet) {
-    var airTunes = makeAirTunesPacket(
+  this.audioCallback = (packet: Packet) => {
+    const airTunes = makeAirTunesPacket(
       packet,
-      self.encoder,
-      self.requireEncryption,
-      self.alacEncoding,
-      self.credentials,
-      self.inputCodec,
+      this.encoder,
+      this.requireEncryption,
+      this.alacEncoding,
+      this.credentials,
+      this.inputCodec,
     );
     // if (self.credentials) {
     //   airTunes = self.credentials.encrypt(airTunes)
     // }
-    if(self.audioSocket == null){
-      self.audioSocket = dgram.createSocket('udp4');
+    if(this.audioSocket == null){
+      this.audioSocket = dgram.createSocket('udp4');
     }
-    self.audioSocket.send(
+    this.audioSocket.send(
       airTunes, 0, airTunes.length,
-      self.serverPort, self.host
+      this.serverPort, this.host
     );
   };
 //   this.sendAirTunesPacket = function(airTunes) {
