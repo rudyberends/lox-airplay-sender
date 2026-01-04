@@ -182,7 +182,8 @@ function AirTunesDevice(
   }
   this.needPassword = false;
   this.needPin = false;
-  this.transient = false;
+  const transientOption = (options as any)?.transient;
+  this.transient = typeof transientOption === 'boolean' ? transientOption : false;
   let d: string[] = this.txt.filter((u: string) => String(u).startsWith('features='));
   if (d.length === 0) d = this.txt.filter((u: string) => String(u).startsWith('ft='));
   const features_set = d.length > 0 ? d[0].substring(d[0].indexOf('=') + 1).split(',') : [];
@@ -190,9 +191,6 @@ function AirTunesDevice(
     ...(features_set.length > 0 ? parseInt(features_set[0], 10).toString(2).split('') : []),
     ...(features_set.length > 1 ? parseInt(features_set[1], 10).toString(2).split('') : []),
   ];
-  if (this.features.length > 0){
-    this.transient = (this.features[this.features.length - 1 - 48] == '1')
-  }
 
   if (this.statusflags.length) {
     let PasswordRequired = (this.statusflags[this.statusflags.length - 1 - 7] == '1')
@@ -201,10 +199,6 @@ function AirTunesDevice(
   // console.debug('needPss', PasswordRequired, PinRequired, OneTimePairingRequired);
     this.needPassword = PasswordRequired;
     this.needPin = (PinRequired || OneTimePairingRequired)
-    this.transient = !(PasswordRequired || PinRequired || OneTimePairingRequired);
-  }
-  if (this.airplay2 && this.statusflags.length === 0 && !this.needPassword && !this.needPin) {
-    this.transient = true;
   }
   // console.debug('transient', this.transient);
   // detect old shairports with broken text
