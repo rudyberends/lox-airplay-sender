@@ -351,6 +351,12 @@ Client.prototype.setVolume = function(this: ClientInstance, volume: number, call
 };
 
 Client.prototype.setProgress = function(this: ClientInstance, progress: number, duration: number, callback?: (err?: unknown) => void) {
+  if (this.airplay2) {
+    this.progress = progress;
+    this.duration = duration;
+    if (typeof callback === 'function') callback();
+    return;
+  }
   if(this.status !== PLAYING)
     return;
   let normProgress = progress;
@@ -401,6 +407,11 @@ Client.prototype.sendHeartBeat = function(this: ClientInstance, callback?: (err?
 };
 
 Client.prototype.setTrackInfo = function(this: ClientInstance, name: string, artist?: string, album?: string, callback?: (err?: unknown) => void) {
+  if (this.airplay2) {
+    this.trackInfo = { name, artist, album };
+    if (typeof callback === 'function') callback();
+    return;
+  }
   if(this.status !== PLAYING)
     return;
   if (name != this.trackInfo?.name || artist != this.trackInfo?.artist || album != this.trackInfo?.album) {
@@ -1247,6 +1258,10 @@ Client.prototype.sendNextRequest = async function(this: ClientInstance, di?: any
     //this.logLine?.(request);
   break;
   case SETPROGRESS:
+    if (this.airplay2) {
+      this.status = PLAYING;
+      break;
+    }
     function hms(seconds: number): string {
       const h = Math.floor(seconds / 3600);
       const m = Math.floor((seconds % 3600) / 60);
@@ -1266,6 +1281,10 @@ Client.prototype.sendNextRequest = async function(this: ClientInstance, di?: any
     //this.logLine?.(request);
   break;
   case SETDAAP:
+    if (this.airplay2) {
+      this.status = PLAYING;
+      break;
+    }
     let daapenc = true;
     //daapenc = true
     var name = this.daapEncode('minm', this.trackInfo.name,daapenc);
@@ -1885,7 +1904,10 @@ Client.prototype.processData = function(this: ClientInstance, blob: string, rawD
         this.status = SETVOLUME;
     break;
 
-    case SETVOLUME:
+  case SETVOLUME:
+    if (this.airplay2) {
+      this.status = PLAYING;
+    } else {
       if (!this.sentFakeProgess) {
         this.progress = 10;
         this.duration = 2000000;
@@ -1895,11 +1917,12 @@ Client.prototype.processData = function(this: ClientInstance, blob: string, rawD
       else {
         this.status = PLAYING;
       };
-    break;
-    case SETPROGRESS:
-      // After reporting progress, stay in PLAYING; avoid forcing FLUSH on every update.
-      this.status = PLAYING;
-    break;
+    }
+  break;
+  case SETPROGRESS:
+    // After reporting progress, stay in PLAYING; avoid forcing FLUSH on every update.
+    this.status = PLAYING;
+  break;
     case SETDAAP:
       this.status = PLAYING;
       break;
