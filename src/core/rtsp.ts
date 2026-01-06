@@ -969,6 +969,9 @@ Client.prototype.sendNextRequest = async function(this: ClientInstance, di?: any
       request += 'Connection: keep-alive\r\n'
     }
     request += 'Apple-Challenge: SdX9kFJVxgKVMFof/Znj4Q\r\n\r\n';
+    this.socket.write(Buffer.from(request, 'utf-8'));
+    request = '';
+    this.status = PLAYING;
   break;
   case OPTIONS2:
 
