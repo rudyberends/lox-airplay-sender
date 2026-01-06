@@ -59,18 +59,18 @@ function logLine(ctx: { log?: LogFn } | null | undefined, ...args: any[]): void 
 }
 
 class BufferWithNames {
-  private readonly buffer: Array<[string, any]> = [];
+  private readonly buffer: Array<[string | number, any]> = [];
 
   constructor(private readonly size: number) {}
 
-  public add(name: string, item: any): void {
+  public add(name: string | number, item: any): void {
     while (this.buffer.length > this.size) {
       this.buffer.shift();
     }
     this.buffer.push([name, item]);
   }
 
-  public getLatestNamed(name: string): any {
+  public getLatestNamed(name: string | number): any {
     for (let i = this.buffer.length - 1; i >= 0; i -= 1) {
       if (this.buffer[i][0] === name) {
         return this.buffer[i][1];
@@ -85,6 +85,7 @@ type AirTunesDeviceInstance = EventEmitter & {
   udpServers: UDPServers;
   audioOut: EventEmitter;
   type: string;
+  deviceMagic: number;
   options: AnyObject;
   host: string;
   port: number;
@@ -117,6 +118,9 @@ type AirTunesDeviceInstance = EventEmitter & {
   doHandshake: () => void;
   relayAudio: () => void;
   cleanup: () => void;
+  onUnderrun?: () => void;
+  audioNonce: number;
+  packetsSent: number;
 };
 
 /**
@@ -137,11 +141,13 @@ function AirTunesDevice(
     throw new Error('host is mandatory');
   }
 
-  this.audioPacketHistory = new BufferWithNames(100);
+  const resendBufferSize = Number((options as any)?.resendBufferSize ?? config.resend_buffer_size ?? 1000);
+  this.audioPacketHistory = new BufferWithNames(Number.isFinite(resendBufferSize) && resendBufferSize > 0 ? resendBufferSize : 1000);
 
   this.udpServers = new UDPServers();
   this.audioOut = audioOut;
   this.type = 'airtunes';
+  this.deviceMagic = Number((options as any)?.deviceMagic ?? config.device_magic);
   this.options = options;
   this.log = (options as any)?.log;
   this.logLine = (...args: any[]) => logLine(this, ...args);
@@ -245,6 +251,17 @@ function AirTunesDevice(
   this.audioCallback = null;
   this.encoder = [];
   this.credentials = null;
+  this.audioNonce = Math.floor(Math.random() * 0xffffffff);
+  this.onUnderrun = () => {
+    this.encoder = [];
+    this.logLine?.('underrun_encoder_reset');
+    this.audioNonce = Math.floor(Math.random() * 0xffffffff);
+    if (this.credentials) {
+      this.credentials.encryptCount = 0;
+      this.credentials.decryptCount = 0;
+    }
+  };
+  this.packetsSent = 0;
 
   // this.func = `
   // const {Worker, isMainThread, parentPort, workerData} = require('node:worker_threads');
@@ -323,7 +340,7 @@ AirTunesDevice.prototype.doHandshake = function (this: AirTunesDeviceInstance): 
   this.rtsp.on('ready', () => {
     this.status = 'playing';
     this.emit('status','playing');
-    if (this.airplay2) this.relayAudio();
+    this.relayAudio();
   });
 
   this.rtsp.on('need_password', () => {
@@ -356,9 +373,9 @@ AirTunesDevice.prototype.doHandshake = function (this: AirTunesDeviceInstance): 
 };
 
 AirTunesDevice.prototype.relayAudio = function (this: AirTunesDeviceInstance): void {
-  this.status = 'ready';
-  this.emit('status', 'ready');
-
+  if (this.audioCallback) {
+    return;
+  }
 
   this.audioCallback = (packet: Packet) => {
     const airTunes = makeAirTunesPacket(
@@ -368,7 +385,16 @@ AirTunesDevice.prototype.relayAudio = function (this: AirTunesDeviceInstance): v
       this.alacEncoding,
       this.credentials,
       this.inputCodec,
+      this.deviceMagic,
+      this.audioNonce,
     );
+    this.packetsSent += 1;
+    this.audioNonce = (this.audioNonce + 1) >>> 0;
+    try {
+      this.audioPacketHistory?.add(packet.seq, airTunes);
+    } catch {
+      /* ignore history errors */
+    }
     // if (self.credentials) {
     //   airTunes = self.credentials.encrypt(airTunes)
     // }
@@ -411,11 +437,30 @@ AirTunesDevice.prototype.relayAudio = function (this: AirTunesDeviceInstance): v
 //     catch (_){}
 //   });
 
+  this.udpServers.on('resendRequested', (missedSeq: number, count: number) => {
+    for (let i = 0; i < count; i += 1) {
+      const seq = missedSeq + i;
+      try {
+        const pkt = this.audioPacketHistory?.getLatestNamed(seq);
+        if (pkt && this.audioSocket) {
+          this.audioSocket.send(pkt, 0, pkt.length, this.serverPort, this.host);
+        }
+      } catch {
+        // ignore resend errors
+      }
+    }
+  });
+
   this.audioOut.on('packet', this.audioCallback);
 };
 
-AirTunesDevice.prototype.onSyncNeeded = function (this: AirTunesDeviceInstance, seq: number): void {
-  this.udpServers.sendControlSync(seq, this);
+AirTunesDevice.prototype.onSyncNeeded = function (
+  this: AirTunesDeviceInstance,
+  seq: number,
+  tsOffsetFrames = 0,
+  rtcp?: { rtpTimestamp: number; ntp: Buffer; packetCount: number; octetCount: number; xr?: { ntp?: Buffer } },
+): void {
+  this.udpServers.sendControlSync(seq, this, tsOffsetFrames, rtcp, { ssrc: this.deviceMagic }, { ntp: rtcp?.xr?.ntp, ssrc: this.deviceMagic });
   //if ( this.airplay2)this.rtsp.sendControlSync(seq, this, this.rtsp);
 };
 
@@ -427,8 +472,14 @@ AirTunesDevice.prototype.cleanup = function (this: AirTunesDeviceInstance): void
   // console.debug('stop');
   if(this.audioCallback) {
     this.audioOut.removeListener('packet', this.audioCallback);
-    this.audioCallback = null;
+  this.audioCallback = null;
+}
+  this.encoder = [];
+  this.audioNonce = Math.floor(Math.random() * 0xffffffff);
+  if (this.credentials) {
+    this.credentials.rotateKeys?.();
   }
+  this.packetsSent = 0;
 
   this.udpServers.close();
   this.removeAllListeners();
@@ -441,7 +492,10 @@ AirTunesDevice.prototype.reportStatus = function (this: AirTunesDeviceInstance):
 
 AirTunesDevice.prototype.stop = function (this: AirTunesDeviceInstance, cb?: () => void): void {
   try{
-    if (!this.rtsp) return;
+    if (!this.rtsp) {
+      if (cb) cb();
+      return;
+    }
     this.rtsp.once('end', function() {
       if(cb)
         cb();
@@ -476,10 +530,6 @@ AirTunesDevice.prototype.setPasscode = function (this: AirTunesDeviceInstance, p
   this.rtsp.setPasscode(password);
 };
 
-AirTunesDevice.prototype.requireEncryption = function (this: AirTunesDeviceInstance): boolean {
-  return Boolean(this.requireEncryption);
-};
-
 export default AirTunesDevice;
 
 
@@ -490,6 +540,8 @@ function makeAirTunesPacket(
   alacEncoding = true,
   credentials: any = null,
   inputCodec: 'pcm' | 'alac' = 'pcm',
+  deviceMagic = config.device_magic,
+  audioNonce = packet.seq,
 ): Buffer {
   const useAlacInput = inputCodec === 'alac';
   var alac = useAlacInput
@@ -499,12 +551,12 @@ function makeAirTunesPacket(
       : pcmParse(packet.pcm);
   var airTunes = Buffer.alloc(alac.length + RTP_HEADER_SIZE);
 
-  var header = makeRTPHeader(packet);
+  var header = makeRTPHeader(packet, deviceMagic);
   if (requireEncryption) {
     alac = encryptAES(alac, alac.length);
   }
   if (credentials) {
-    let pcm = credentials.encryptAudio(alac,header.slice(4,12),packet.seq)
+    let pcm = credentials.encryptAudio(alac,header.slice(4,12),audioNonce)
     let airplay = Buffer.alloc(RTP_HEADER_SIZE + pcm.length);
     header.copy(airplay);
     pcm.copy(airplay, RTP_HEADER_SIZE);
@@ -555,7 +607,7 @@ function encryptAES(alacData: Buffer, alacSize: number): Buffer {
 
 
 
-function makeRTPHeader(packet: Packet): Buffer {
+function makeRTPHeader(packet: Packet, deviceMagic: number): Buffer {
   var header = Buffer.alloc(RTP_HEADER_SIZE);
 
   if(packet.seq === 0)
@@ -566,7 +618,7 @@ function makeRTPHeader(packet: Packet): Buffer {
   header.writeUInt16BE(nu.low16(packet.seq), 2);
 
   header.writeUInt32BE(packet.timestamp, 4);
-  header.writeUInt32BE(config.device_magic, 8);
+  header.writeUInt32BE(deviceMagic, 8);
 
   return header;
 }

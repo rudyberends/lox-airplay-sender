@@ -29,6 +29,12 @@ export interface AirplayConfig {
   jump_forward_threshold_ms: number;
   jump_forward_lead_ms: number;
   device_magic: number;
+  resend_buffer_size: number;
+  send_rtcp_sr: boolean;
+  send_rtcp_rr: boolean;
+  send_rtcp_xr: boolean;
+  underrun_mute_ms: number;
+  debug_dump: boolean;
   ntp_epoch: number;
   iv_base64: string;
   rsa_aeskey_base64: string;
@@ -48,7 +54,7 @@ export const config: AirplayConfig = {
   coreaudio_check_period: 2000, // CoreAudio buffer level check period
   coreaudio_preload: 352 * 2 * 2 * 50, // ~0.5s of silence pushed to CoreAudio to avoid draining AudioQueue
   sampling_rate: 44100, // fixed by AirTunes v2
-  sync_period: 126, // UDP sync packets are sent to all AirTunes devices regularly
+  sync_period: 0, // UDP sync packets are sent to all AirTunes devices regularly (0 = derive from sample rate)
   stream_latency: 200, // audio UDP packets are flushed in bursts periodically
   rtsp_timeout: 2147483647, // RTSP servers are considered gone if no reply is received before the timeout (legacy default)
   rtsp_heartbeat: 15000, // some RTSP (like HomePod) servers requires heartbeat.
@@ -58,11 +64,17 @@ export const config: AirplayConfig = {
   rtsp_retry_jitter_ms: 150,
   control_sync_base_delay_ms: 2,
   control_sync_jitter_ms: 3,
-  use_monotonic_clock: false,
+  use_monotonic_clock: true,
   jump_forward_enabled: false,
   jump_forward_threshold_ms: 180,
   jump_forward_lead_ms: 220,
   device_magic: randomInt(9),
+  resend_buffer_size: 1000,
+  send_rtcp_sr: true,
+  send_rtcp_rr: true,
+  send_rtcp_xr: false,
+  underrun_mute_ms: 50,
+  debug_dump: false,
   ntp_epoch: 0x83aa7e80,
   iv_base64: 'ePRBLI0XN5ArFaaz7ncNZw',
   rsa_aeskey_base64:

@@ -23,6 +23,7 @@ export default class CircularBuffer extends EventEmitter {
   private buffers: Buffer[] = [];
   private currentSize = 0;
   private status = WAITING;
+  private hadUnderrun = false;
 
   constructor(packetsInBuffer: number, packetSize: number) {
     super();
@@ -72,6 +73,10 @@ export default class CircularBuffer extends EventEmitter {
       (this.status === FILLING || this.currentSize < this.packetSize)
     ) {
       packet.pcm.fill(0);
+      if (!this.hadUnderrun) {
+        this.hadUnderrun = true;
+        this.emit('underrun');
+      }
 
       if (this.status !== FILLING && this.status !== WAITING) {
         this.status = FILLING;
@@ -104,6 +109,9 @@ export default class CircularBuffer extends EventEmitter {
       }
 
       this.currentSize -= this.packetSize;
+      if (this.hadUnderrun && this.currentSize >= this.packetSize) {
+        this.hadUnderrun = false;
+      }
 
       if (this.status === ENDING && this.currentSize <= 0) {
         this.status = ENDED;

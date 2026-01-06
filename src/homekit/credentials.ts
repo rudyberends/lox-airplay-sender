@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import encryption from './encryption';
 const struct: any = require('python-struct');
 
@@ -110,6 +111,16 @@ class Credentials {
             Buffer.concat(encryption.encryptAndSeal(message, aad, struct.pack("Q", nonce), this.writeKey)),
             Buffer.from(struct.pack("Q", nonce)),
         ]);
+    }
+
+    rotateKeys(): void {
+        const info = Buffer.from('AirPlay:Audio', 'utf-8'); // reference-style info
+        const salt = Buffer.alloc(16, 0); // deterministic salt like reference
+        const newKey = encryption.HKDF('sha256', salt, this.encryptionKey, info, 32);
+        this.writeKey = newKey;
+        this.readKey = newKey;
+        this.encryptCount = 0;
+        this.decryptCount = 0;
     }
 }
 

@@ -4,6 +4,7 @@ import { Readable } from 'node:stream';
 // Airtunes implementation (node_airtunes2 port) in src/core.
 import LegacyAirTunes from './core/index';
 import config, { applyConfig, type AirplayConfig } from './utils/config';
+import { toNtpTimestamp, type NtpTimestampInput } from './utils/ntp';
 
 type LegacyAirTunesInstance = {
   add: (host: string, options?: Record<string, unknown>, mode?: number, txt?: string[] | string) => any;
@@ -48,10 +49,18 @@ export interface LoxAirplaySenderOptions {
   debug?: boolean;
   /** Optional unix ms start time for synced playback. */
   startTimeMs?: number;
+  /** Optional absolute NTP start time (uint64: sec<<32 | frac). */
+  startTimeNtp?: NtpTimestampInput;
   /** Logger hook for internal messages. */
   log?: (level: 'debug' | 'info' | 'warn' | 'error', message: string, data?: unknown) => void;
   /** Override transport/buffer tuning without patching the module. */
   config?: Partial<AirplayConfig>;
+  /** Optional override for per-session SSRC/device magic. */
+  deviceMagic?: number;
+  /** Optional override for resend buffer size (packets). */
+  resendBufferSize?: number;
+  /** Optional mute window (ms) after underrun to smooth recovery. */
+  underrunMuteMs?: number;
 }
 
 /**
@@ -105,6 +114,10 @@ export class LoxAirplaySender extends EventEmitter {
     this.airtunes = new LegacyAirTunes({
       packetSize: config.packet_size,
       startTimeMs: options.startTimeMs,
+      startTimeNtp: options.startTimeNtp ? toNtpTimestamp(options.startTimeNtp) : undefined,
+      deviceMagic: options.deviceMagic,
+      resendBufferSize: options.resendBufferSize,
+      underrunMuteMs: options.underrunMuteMs,
       config: options.config,
     }) as LegacyAirTunesInstance;
     this.airtunes.on('device', (key: string, status: string, desc: string) => {

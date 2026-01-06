@@ -2,6 +2,8 @@ import { Duplex } from 'node:stream';
 import Devices from './devices';
 import config, { applyConfig, type AirplayConfig } from '../utils/config';
 import CircularBuffer from '../utils/circularBuffer';
+import { toNtpTimestamp, type NtpTimestampInput } from '../utils/ntp';
+import { randomInt } from '../utils/numUtil';
 import AudioOut from './audioOut';
 
 /**
@@ -11,19 +13,34 @@ import AudioOut from './audioOut';
 class AirTunes extends Duplex {
   public readonly devices: Devices;
   private readonly circularBuffer: CircularBuffer;
+  private readonly deviceMagic: number;
 
   /**
-   * @param options.packetSize Override packet size; defaults to config.
-   * @param options.startTimeMs Optional unix ms to align playback start.
-   */
-  constructor(options: { packetSize?: number; startTimeMs?: number; config?: Partial<AirplayConfig> } = {}) {
+ * @param options.packetSize Override packet size; defaults to config.
+ * @param options.startTimeMs Optional unix ms to align playback start.
+ * @param options.startTimeNtp Optional NTP timestamp (uint64) to align playback start.
+ */
+  constructor(
+    options: {
+      packetSize?: number;
+      startTimeMs?: number;
+      startTimeNtp?: NtpTimestampInput;
+      config?: Partial<AirplayConfig>;
+      deviceMagic?: number;
+      resendBufferSize?: number;
+      underrunMuteMs?: number;
+    } = {},
+  ) {
     super({ readableObjectMode: false, writableObjectMode: false });
 
     if (options.config) {
       applyConfig(options.config);
     }
+    // Randomize per-session device magic (SSRC equivalent) to align with reference behavior.
+    const deviceMagic = typeof options.deviceMagic === 'number' ? options.deviceMagic : randomInt(9);
 
     const audioOut = new AudioOut();
+    this.deviceMagic = deviceMagic;
     this.devices = new Devices(audioOut);
 
     this.devices.init();
@@ -32,13 +49,21 @@ class AirTunes extends Duplex {
     });
 
     const packetSize = options.packetSize ?? config.packet_size;
+    const startTimeNtp = options.startTimeNtp ? toNtpTimestamp(options.startTimeNtp) : undefined;
     this.circularBuffer = new CircularBuffer(config.packets_in_buffer, packetSize);
 
     this.circularBuffer.on('status', (status) => {
       this.emit('buffer', status);
     });
 
-    audioOut.init(this.devices, this.circularBuffer, options.startTimeMs);
+    audioOut.init(
+      this.devices,
+      this.circularBuffer,
+      options.startTimeMs,
+      startTimeNtp,
+      deviceMagic,
+      options.underrunMuteMs,
+    );
     audioOut.on('metrics', (metrics) => {
       this.emit('metrics', metrics);
     });
@@ -54,7 +79,13 @@ class AirTunes extends Duplex {
 
   /** Register an AirTunes (RAOP) device and start streaming to it. */
   public add(host: string, options: Record<string, unknown>, mode = 0, txt: string[] | string = '') {
-    return this.devices.add('airtunes', host, options, mode, txt);
+    return this.devices.add(
+      'airtunes',
+      host,
+      { ...options, deviceMagic: this.deviceMagic, resendBufferSize: options.resendBufferSize },
+      mode,
+      txt,
+    );
   }
 
   /** Register a CoreAudio output (legacy shim). */

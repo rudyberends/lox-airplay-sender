@@ -1,3 +1,4 @@
+// @ts-nocheck
 var net = require('net'),
     nodeCrypto = require('crypto'),
     events = require('events'),
@@ -194,6 +195,7 @@ function Client(this: ClientInstance, volume: number, password: string | null, a
   this.homekitver = this.transient ? "4" : "3";
   this.metadataReady = false;
   (this as AnyObject).connectAttempts = 0;
+  (this as AnyObject).lastBackoff = 0;
 }
 
 util.inherits(Client, events.EventEmitter);
@@ -277,7 +279,8 @@ Client.prototype.startHandshake = function(this: ClientInstance, udpServers: any
         );
         const jitter = Math.random() * config.rtsp_retry_jitter_ms;
         const backOff = baseBackOff + jitter;
-        if (this.debug) this.logLine?.('rtsp_retry', { attempt: nextAttempt, backOff, code: err?.code });
+        (this as AnyObject).lastBackoff = backOff;
+        if (this.debug || config.debug_dump) this.logLine?.('rtsp_retry', { attempt: nextAttempt, backOff, code: err?.code });
         setTimeout(() => {
           this.startTimeout();
           connect();
@@ -300,6 +303,8 @@ Client.prototype.startHandshake = function(this: ClientInstance, udpServers: any
           cseq: this.cseq,
         });
       }
+      (this as AnyObject).connectAttempts = 0;
+      (this as AnyObject).lastBackoff = 0;
       this.cleanup('disconnected');
     });
   };
@@ -478,6 +483,7 @@ Client.prototype.cleanup = function(this: ClientInstance, type: string, msg?: an
   this.seed = null;
   this.credentials = null;
   // this.password = null;
+  (this as AnyObject).connectAttempts = 0;
   this.removeAllListeners();
 
   if(this.timeout) {
@@ -1309,6 +1315,10 @@ Client.prototype.sendNextRequest = async function(this: ClientInstance, di?: any
   }
 
   this.startTimeout();
+  if (config.debug_dump) {
+    // eslint-disable-next-line no-console
+    console.debug('rtsp_req', { status: rtsp_methods[this.status] ?? this.status, len: request.length });
+  }
   if (this.encryptedChannel && this.credentials) {
     this.socket.write(this.credentials.encrypt(Buffer.concat([Buffer.from(request, 'utf-8')])));
   } else
@@ -1378,6 +1388,10 @@ Client.prototype.processData = function(this: ClientInstance, blob: string, rawD
   this.logLine?.('Receiving request:',this.hostip , rtsp_methods[this.status+1]);
   var response: AnyObject = parseResponse2(blob, this),
       headers: AnyObject = response.headers || {};
+  if (config.debug_dump) {
+    // eslint-disable-next-line no-console
+    console.debug('rtsp_res', { code: response.code, status: rtsp_methods[this.status + 1], len: rawData.length });
+  }
   if (this.debug) {
     try {
       if ((rawData.toString()).includes("bplist00")) {

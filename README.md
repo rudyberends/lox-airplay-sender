@@ -1,6 +1,6 @@
-# lox-airplay-sender
+# @lox-audioserver/node-airplay-sender
 
-AirPlay sender (RAOP/AirPlay 1 + AirPlay 2 auth) refactored from node_airtunes2 into a modern, typed TypeScript module. It owns the RTSP/UDP pipeline, ALAC encoding, and metadata handling with no native dependencies.
+AirPlay sender for RAOP/AirPlay 1 with AirPlay 2 control/auth support. Best-effort AP2 audio (encryption path not validated against native code). Implements RTSP/UDP pipeline, ALAC encoding, and metadata handling with no native dependencies.
 
 ## Requirements
 - Node.js 18+
@@ -55,6 +55,12 @@ Creates and starts a sender for one AirPlay device. Returns the instance so you 
 - `inputCodec` (`"pcm"` | `"alac"`) Defaults to `"pcm"`.
 - `airplay2` (boolean) Enable AirPlay 2 auth/flags; default false.
 - `startTimeMs` (number) Unix ms to align playback across devices.
+- `startTimeNtp` (bigint | number | `{ sec, frac }`) Absolute NTP start time (sec<<32|frac) for tighter sync.
+- `deviceMagic` (number) Override per-session SSRC/device ID used in RTP/RTCP.
+- `resendBufferSize` (number) Override resend cache size (packets); defaults to 1000.
+- `underrunMuteMs` (number) Mute window in ms after an underrun to smooth recovery; defaults to 50.
+- `sendRtcpXr` (boolean) Emit RTCP Extended Reports (RRT) alongside sync/SSR; default false.
+- `debugDump` (boolean) Log RTSP/RTCP traffic for debugging; default false.
 - `debug` (boolean) Verbose logging from the transport stack.
 - `log` `(level, message, data?) => void` Hook for library logs.
 - `config` (partial) Override buffer/sync/RTSP tuning at runtime (see `src/utils/config.ts` for keys like `packets_in_buffer`, `stream_latency`, `sync_period`, retry/backoff, etc.).

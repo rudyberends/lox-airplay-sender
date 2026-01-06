@@ -25,14 +25,26 @@ export default class Devices extends EventEmitter implements DevicesEmitter {
 
   /** Wire device sync events from AudioOut into individual devices. */
   public init(): void {
-    this.audioOut.on('need_sync', (seq: number) => {
+    this.audioOut.on('need_sync', (payload: { seq: number; tsOffsetFrames?: number; rtcp?: any }) => {
       this.forEach((dev) => {
         try {
           if (dev.onSyncNeeded && dev.controlPort) {
-            dev.onSyncNeeded(seq);
+            dev.onSyncNeeded(payload.seq, payload.tsOffsetFrames ?? 0, payload.rtcp);
           }
         } catch {
           // ignore
+        }
+      });
+    });
+
+    this.audioOut.on('underrun', () => {
+      this.forEach((dev) => {
+        try {
+          if (dev.onUnderrun) {
+            dev.onUnderrun();
+          }
+        } catch {
+          /* ignore */
         }
       });
     });

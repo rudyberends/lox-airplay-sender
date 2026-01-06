@@ -20,6 +20,24 @@ type ControlSyncTarget = {
   controlPort: number;
 };
 
+type SenderReportCounters = {
+  rtpTimestamp: number;
+  ntp: Buffer;
+  packetCount: number;
+  octetCount: number;
+};
+
+type ReceiverReport = {
+  ssrc?: number;
+};
+
+type ExtendedReport = {
+  ntp?: Buffer;
+  ssrc?: number;
+  lastRr?: number;
+  delaySinceLastRr?: number;
+};
+
 /**
  * Manages control/timing UDP sockets used by RAOP for resend requests and clock sync.
  * Binds ports for both endpoints and emits events with socket info.
@@ -156,18 +174,25 @@ export default class UDPServers extends EventEmitter {
   /**
    * Send an RTCP sync packet to a receiver to align playback.
    */
-  public sendControlSync(seq: number, dev: ControlSyncTarget): void {
+  public sendControlSync(
+    seq: number,
+    dev: ControlSyncTarget,
+    tsOffsetFrames = 0,
+    sr?: SenderReportCounters,
+    rr?: ReceiverReport,
+    xr?: ExtendedReport,
+  ): void {
     if (this.status !== BOUND || !this.control.socket) return;
 
     const packet = Buffer.alloc(20);
     packet.writeUInt16BE(0x80d4, 0);
     packet.writeUInt16BE(0x0007, 2);
-    packet.writeUInt32BE(low32(seq * config.frames_per_packet), 4);
+    packet.writeUInt32BE(low32((seq + tsOffsetFrames) * config.frames_per_packet), 4);
 
     const ntpTime = ntp.timestamp();
     ntpTime.copy(packet, 8);
 
-    packet.writeUInt32BE(low32(seq * config.frames_per_packet + config.sampling_rate * 2), 16);
+    packet.writeUInt32BE(low32((seq + tsOffsetFrames) * config.frames_per_packet + config.sampling_rate * 2), 16);
     const delay = Math.max(
       0,
       config.control_sync_base_delay_ms +
@@ -175,7 +200,103 @@ export default class UDPServers extends EventEmitter {
     );
 
     setTimeout(() => {
+      if (config.debug_dump) {
+        // eslint-disable-next-line no-console
+        console.debug('rtcp_sync', { seq, tsOffsetFrames, host: dev.host, port: dev.controlPort });
+      }
       this.control.socket?.send(packet, 0, packet.length, dev.controlPort, dev.host);
+      if (sr && config.send_rtcp_sr) {
+        const srPacket = this.buildSenderReport(sr);
+        if (config.debug_dump) {
+          // eslint-disable-next-line no-console
+          console.debug('rtcp_sr', { ssrc: config.device_magic, rtp: sr.rtpTimestamp, packets: sr.packetCount });
+        }
+        this.control.socket?.send(srPacket, 0, srPacket.length, dev.controlPort, dev.host);
+      }
+      if (config.send_rtcp_rr) {
+        const rrPacket = this.buildReceiverReport(rr);
+        if (config.debug_dump) {
+          // eslint-disable-next-line no-console
+          console.debug('rtcp_rr', { ssrc: config.device_magic });
+        }
+        this.control.socket?.send(rrPacket, 0, rrPacket.length, dev.controlPort, dev.host);
+      }
+      if (xr && config.send_rtcp_xr) {
+        const xrPacket = this.buildExtendedReport(xr);
+        if (config.debug_dump) {
+          // eslint-disable-next-line no-console
+          console.debug('rtcp_xr', { ssrc: config.device_magic });
+        }
+        this.control.socket?.send(xrPacket, 0, xrPacket.length, dev.controlPort, dev.host);
+      }
     }, delay);
+  }
+
+  private buildSenderReport(counters: SenderReportCounters): Buffer {
+    const sr = Buffer.alloc(28);
+    // V=2, P=0, RC=0
+    sr.writeUInt8(0x80, 0);
+    // PT=200 (SR)
+    sr.writeUInt8(200, 1);
+    // length in 32-bit words minus 1 -> 6 words (28 bytes) => 6
+    sr.writeUInt16BE(6, 2);
+    // SSRC
+    sr.writeUInt32BE(config.device_magic, 4);
+    // NTP timestamp
+    counters.ntp.copy(sr, 8, 0, 8);
+    // RTP timestamp
+    sr.writeUInt32BE(low32(counters.rtpTimestamp), 16);
+    // packet count
+    sr.writeUInt32BE(low32(counters.packetCount), 20);
+    // octet count
+    sr.writeUInt32BE(low32(counters.octetCount), 24);
+    return sr;
+  }
+
+  private buildReceiverReport(rr?: ReceiverReport): Buffer {
+    const packet = Buffer.alloc(8);
+    // V=2, P=0, RC=0
+    packet.writeUInt8(0x80, 0);
+    // PT=201 (RR)
+    packet.writeUInt8(201, 1);
+    // length = 1 (8 bytes / 4 - 1)
+    packet.writeUInt16BE(1, 2);
+    // SSRC
+    packet.writeUInt32BE(rr?.ssrc ?? config.device_magic, 4);
+    return packet;
+  }
+
+  private buildExtendedReport(xr?: ExtendedReport): Buffer {
+    // XR with RRT (Receiver Reference Time) and optional DLRR.
+    const rrtBlock = Buffer.alloc(12);
+    // BT=4 (RRT), reserved+block length=2 (8 octets following header)
+    rrtBlock.writeUInt8(4, 0);
+    rrtBlock.writeUInt8(0, 1);
+    rrtBlock.writeUInt16BE(2, 2);
+    (xr?.ntp ?? ntp.timestamp()).copy(rrtBlock, 4, 0, 8);
+
+    let dlrrBlock: Buffer | null = null;
+    if (typeof xr?.lastRr === 'number' || typeof xr?.delaySinceLastRr === 'number') {
+      dlrrBlock = Buffer.alloc(12);
+      // BT=5 (DLRR)
+      dlrrBlock.writeUInt8(5, 0);
+      dlrrBlock.writeUInt8(0, 1);
+      dlrrBlock.writeUInt16BE(3, 2); // block length (3 words = 12 bytes following header)
+      dlrrBlock.writeUInt32BE(xr?.lastRr ?? 0, 4);
+      dlrrBlock.writeUInt32BE(xr?.delaySinceLastRr ?? 0, 8);
+    }
+
+    const blocks = dlrrBlock ? Buffer.concat([rrtBlock, dlrrBlock]) : rrtBlock;
+    const packet = Buffer.alloc(8 + blocks.length);
+    // V=2, P=0, RC=0
+    packet.writeUInt8(0x80, 0);
+    // PT=207 (XR)
+    packet.writeUInt8(207, 1);
+    // length in 32-bit words minus 1
+    packet.writeUInt16BE(packet.length / 4 - 1, 2);
+    // SSRC
+    packet.writeUInt32BE(xr?.ssrc ?? config.device_magic, 4);
+    blocks.copy(packet, 8);
+    return packet;
   }
 }
