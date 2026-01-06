@@ -1640,7 +1640,9 @@ Client.prototype.processData = function(this: ClientInstance, blob: string, rawD
         return;
       }
       // this.logLine?.("DEBUG: Device Proof=" + this.deviceProof.toString('hex'));
-      this.srp.checkM2(this.deviceProof);
+      if (!this.transient) {
+        this.srp.checkM2(this.deviceProof);
+      }
       if (this.transient == true) {
         this.credentials = new Credentials(
           "sdsds",
