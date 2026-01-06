@@ -106,11 +106,12 @@ class Credentials {
         }
         return result;
     }
-    encryptAudio(message: Buffer, aad: Buffer | null, nonce: number): Buffer {
-        return Buffer.concat([
-            Buffer.concat(encryption.encryptAndSeal(message, aad, struct.pack("Q", nonce), this.writeKey)),
-            Buffer.from(struct.pack("Q", nonce)),
-        ]);
+    encryptAudio(message: Buffer, aad: Buffer | null, seq: number): Buffer {
+        const nonce = Buffer.alloc(12, 0);
+        nonce.writeUInt16BE(seq & 0xffff, 4);
+        const [cipher, tag] = encryption.encryptAndSeal(message, aad, nonce, this.writeKey);
+        // Reference appends auth tag and nonce (without leading zeros)
+        return Buffer.concat([cipher, tag, nonce.slice(4)]);
     }
 
     rotateKeys(): void {
