@@ -135,6 +135,7 @@ function Client(this: ClientInstance, volume: number, password: string | null, a
   this.activeRemote = nu.randomInt(9).toString().toUpperCase();
   this.dacpId = "04F8191D99BEC6E9";
   this.session = null;
+  this.readySent = false;
   this.timeout = null;
   this.volume = volume;
   this.progress = 0;
@@ -1855,25 +1856,38 @@ Client.prototype.processData = function(this: ClientInstance, blob: string, rawD
     case RECORD:
         this.metadataReady = true;
         this.emit('pair_success')
-        if (!this.airplay2) {
-        this.session = this.session ?? "1"
-        this.emit('ready')};
+        if (this.airplay2) {
+          // AirPlay2 may not send FLUSH after SETPROGRESS; ensure session exists and start relay once.
+          this.session = this.session ?? "1";
+          if (!this.readySent) {
+            this.readySent = true;
+            this.emit('ready');
+          }
+        } else {
+          this.session = this.session ?? "1";
+          this.emit('ready');
+        }
         this.status = SETVOLUME;
     break;
 
     case SETVOLUME:
-      if (!this.sentFakeProgess) {
-        this.progress = 10;
-        this.duration = 2000000;
-        this.sentFakeProgess = true;
-        this.status = SETPROGRESS;
-      }
-      else {
+      if (this.airplay2) {
         this.status = PLAYING;
-      };
+      } else {
+        if (!this.sentFakeProgess) {
+          this.progress = 10;
+          this.duration = 2000000;
+          this.sentFakeProgess = true;
+          this.status = SETPROGRESS;
+        }
+        else {
+          this.status = PLAYING;
+        };
+      }
     break;
     case SETPROGRESS:
-      this.status = this.airplay2 ? FLUSH: PLAYING;
+      // Keep PLAYING to avoid forcing FLUSH on every progress update.
+      this.status = PLAYING;
     break;
     case SETDAAP:
       this.status = PLAYING;

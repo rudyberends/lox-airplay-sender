@@ -1,7 +1,7 @@
 {
-  "name": "lox-airplay-sender",
-  "version": "0.3.1",
-  "description": "AirPlay sender (RAOP/AirPlay 1 + AirPlay 2 auth flows) ",
+  "name": "@lox-audioserver/node-airplay-sender",
+  "version": "0.4.5",
+  "description": "AirPlay sender (RAOP/AirPlay 1; AirPlay 2 control/auth, best-effort audio)",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "exports": {
@@ -12,7 +12,11 @@
       "default": "./dist/index.js"
     }
   },
-  "files": ["dist/**/*", "README.md", "LICENSE"],
+  "files": [
+    "dist/**/*",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "build": "npm run build:cjs && npm run build:esm",
     "build:cjs": "tsc -p tsconfig.json",
@@ -22,13 +26,18 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/rudyberends/lox-airplay-sender.git"
+    "url": "git+https://github.com/lox-audioserver/node-airplay-sender.git"
   },
   "bugs": {
-    "url": "https://github.com/rudyberends/lox-airplay-sender/issues"
+    "url": "https://github.com/lox-audioserver/node-airplay-sender/issues"
   },
-  "homepage": "https://github.com/rudyberends/lox-airplay-sender#readme",
-  "keywords": ["airplay", "raop", "audio", "streaming"],
+  "homepage": "https://github.com/lox-audioserver/node-airplay-sender#readme",
+  "keywords": [
+    "airplay",
+    "raop",
+    "audio",
+    "streaming"
+  ],
   "engines": {
     "node": ">=18"
   },
