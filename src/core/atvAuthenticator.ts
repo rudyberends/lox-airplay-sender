@@ -1,7 +1,18 @@
-const elliptic: any = require('elliptic');
 import crypto from 'crypto';
 import * as ed from '@noble/ed25519';
 import { hexString2ArrayBuffer, buf2hex } from '../utils/util';
+
+if (!ed.utils.sha512Sync)
+{
+    ed.utils.sha512Sync = (...messages: Uint8Array[]): Uint8Array => {
+        const hash = crypto.createHash('sha512');
+        for (const message of messages)
+        {
+            hash.update(message);
+        }
+        return new Uint8Array(hash.digest());
+    };
+}
 
 // ...
 // Note: All functions expect parameters to be hex strings.
@@ -55,7 +66,8 @@ function pair_verify_aes_iv(shared: string): string
 
 function a_pub(a: string): string
 {
-    return elliptic.utils.toHex(new elliptic.eddsa('ed25519').keyFromSecret(a).getPublic());
+    const publicKey = ed.sync.getPublicKey(hexString2ArrayBuffer(a));
+    return buf2hex(publicKey);
 }
 
 function confirm(a: string, K: string): { epk: string; authTag: string }
@@ -114,9 +126,9 @@ function shared(v_pri: string, atv_pub: string): string
 
 function signed(a: string, v_pub: string, atv_pub: string): string
 {
-    const key = new elliptic.eddsa('ed25519').keyFromSecret(a);
-
-    return key.sign(v_pub + atv_pub).toHex();
+    const message = hexString2ArrayBuffer(v_pub + atv_pub);
+    const signature = ed.sync.sign(message, hexString2ArrayBuffer(a));
+    return buf2hex(signature);
 }
 
 function signature(shared: string, atv_data: string, signed: string): string
