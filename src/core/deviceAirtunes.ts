@@ -329,7 +329,7 @@ AirTunesDevice.prototype.doHandshake = function (this: AirTunesDeviceInstance): 
   this.rtsp.on('ready', () => {
     this.status = 'playing';
     this.emit('status','playing');
-    if (this.airplay2) this.relayAudio();
+    this.relayAudio();
   });
 
   this.rtsp.on('need_password', () => {
@@ -365,6 +365,9 @@ AirTunesDevice.prototype.relayAudio = function (this: AirTunesDeviceInstance): v
   this.status = 'ready';
   this.emit('status', 'ready');
 
+  let packetCount = 0;
+  let byteCount = 0;
+  let lastLogAt = 0;
 
   this.audioCallback = (packet: Packet) => {
     const airTunes = makeAirTunesPacket(
@@ -380,11 +383,41 @@ AirTunesDevice.prototype.relayAudio = function (this: AirTunesDeviceInstance): v
     // }
     if(this.audioSocket == null){
       this.audioSocket = dgram.createSocket('udp4');
+      this.audioSocket.on('error', (err) => {
+        this.logLine?.('audio socket error', {
+          host: this.host,
+          port: this.serverPort,
+          message: err instanceof Error ? err.message : String(err),
+        });
+      });
     }
     this.audioSocket.send(
       airTunes, 0, airTunes.length,
-      this.serverPort, this.host
+      this.serverPort, this.host,
+      (err) => {
+        if (err) {
+          this.logLine?.('audio packet send failed', {
+            host: this.host,
+            port: this.serverPort,
+            message: err instanceof Error ? err.message : String(err),
+          });
+        }
+      },
     );
+    packetCount += 1;
+    byteCount += airTunes.length;
+    const now = Date.now();
+    if (now - lastLogAt > 5000) {
+      lastLogAt = now;
+      if ((this.options as any)?.debug) {
+        this.logLine?.('audio packet send stats', {
+          host: this.host,
+          port: this.serverPort,
+          packets: packetCount,
+          bytes: byteCount,
+        });
+      }
+    }
   };
 //   this.sendAirTunesPacket = function(airTunes) {
 //     try{
